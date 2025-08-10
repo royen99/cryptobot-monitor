@@ -113,10 +113,13 @@ async def coins_badges(session: AsyncSession = Depends(get_session), lookback_ho
     res = await session.execute(select(Balance))
     bal = {b.currency.upper(): D(b.available_balance or 0) for b in res.scalars().all()}
 
-    # total_profit map
+    # trading_state: we need both total_profit AND initial_price
     res = await session.execute(select(TradingState))
+    state_rows = res.scalars().all()
     profit_map = {row.symbol.upper(): (D(row.total_profit) if row.total_profit is not None else D("0"))
-                  for row in res.scalars().all()}
+                  for row in state_rows}
+    initial_map = {row.symbol.upper(): (D(row.initial_price) if row.initial_price is not None else None)
+                   for row in state_rows}
 
     now = datetime.utcnow()
     since = now - timedelta(hours=lookback_hours)
@@ -128,7 +131,7 @@ async def coins_badges(session: AsyncSession = Depends(get_session), lookback_ho
 
         amount = bal.get(coin, D("0"))
         price_now = await _latest_price(session, coin)
-        price_ref = await _price_at_or_after(session, coin, since)
+        price_ref_window = await _price_at_or_after(session, coin, since)
 
         # DCA avg & targets
         dca_avg = await get_weighted_avg_buy_price(session, coin)
@@ -138,34 +141,54 @@ async def coins_badges(session: AsyncSession = Depends(get_session), lookback_ho
         buy_pct  = D(cfg.coins[coin].buy_percentage)  if coin in cfg.coins else D(cfg.buy_percentage)
         rebuy_disc = D(cfg.coins[coin].rebuy_discount) if coin in cfg.coins else D("0")
 
-        sell_target = (dca_avg_D * (D("1") + sell_pct / D("100"))) if (dca_avg_D is not None) else None
-        buy_target  = (dca_avg_D * (D("1") + buy_pct  / D("100"))) if (dca_avg_D is not None) else None
+        # prefer DCA for sell target; fall back to INITIAL so it's defined even if no DCA
+        base_for_sell = dca_avg_D if dca_avg_D is not None else initial_map.get(coin)
+        sell_target   = (base_for_sell * (D("1") + sell_pct / D("100"))) if base_for_sell is not None else None
 
         last_sell_price = await get_last_sell_price(session, coin)
         rebuy_level = (last_sell_price * (D("1") - rebuy_disc / D("100"))) if (last_sell_price is not None) else None
 
         position_usdc = (amount * price_now) if (price_now is not None) else None
-        eligible = (position_usdc is not None and position_usdc >= D("1"))
+        eligible = (position_usdc is not None and position_usdc >= D("1"))  # has holdings ≥ $1
 
+        # --- FIX: choose reference for target distance correctly ---
+        # If we HOLD: DCA → INITIAL → LAST_SELL
+        # If we DON'T HOLD: INITIAL → LAST_SELL → DCA
         ref_price = None
         ref_kind = None
+        if eligible:
+            if dca_avg_D is not None:
+                ref_price, ref_kind = dca_avg_D, "DCA"
+            elif initial_map.get(coin) is not None:
+                ref_price, ref_kind = initial_map[coin], "INITIAL"
+            elif last_sell_price is not None:
+                ref_price, ref_kind = last_sell_price, "LAST_SELL"
+        else:
+            if initial_map.get(coin) is not None:
+                ref_price, ref_kind = initial_map[coin], "INITIAL"
+            elif last_sell_price is not None:
+                ref_price, ref_kind = last_sell_price, "LAST_SELL"
+            elif dca_avg_D is not None:
+                ref_price, ref_kind = dca_avg_D, "DCA"
 
-        if dca_avg_D is not None:
-            ref_price, ref_kind = dca_avg_D, "DCA"
-        elif last_sell_price is not None:
-            ref_price, ref_kind = last_sell_price, "LAST_SELL"
-
+        # distance to SELL target (unchanged)
         distance_sell_pct = None
         if price_now is not None and sell_target is not None and price_now != 0:
             distance_sell_pct = ((sell_target / price_now) - D("1")) * D("100")
 
+        # 24h change (unchanged)
         change_24h_pct = None
-        if price_now is not None and price_ref not in (None, D("0")):
-            change_24h_pct = ((price_now / price_ref) - D("1")) * D("100")
+        if price_now is not None and price_ref_window not in (None, D("0")):
+            change_24h_pct = ((price_now / price_ref_window) - D("1")) * D("100")
 
+        # % from chosen reference (this feeds your Target Δ% badge)
         current_pct_from_ref = None
         if price_now is not None and ref_price not in (None, D("0")):
             current_pct_from_ref = ((price_now / ref_price) - D("1")) * D("100")
+
+        # Also ensure BUY target exists when DCA is missing: use chosen ref (INITIAL for unheld)
+        base_for_buy = ref_price if ref_price is not None else price_now
+        buy_target   = (base_for_buy * (D("1") + buy_pct / D("100"))) if base_for_buy is not None else None
 
         rows.append({
             "coin": coin,
@@ -186,7 +209,7 @@ async def coins_badges(session: AsyncSession = Depends(get_session), lookback_ho
             "position_usdc": str(position_usdc) if position_usdc is not None else None,
             "total_profit": str(profit_map.get(coin, D("0"))),
 
-            # reference for target distance badge
+            # reference for target distance badge (now correct for unheld coins)
             "ref_kind": ref_kind,
             "current_pct_from_ref": str(current_pct_from_ref.quantize(D('0.01'))) if current_pct_from_ref is not None else None,
 
