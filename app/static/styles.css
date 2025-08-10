@@ -1,0 +1,10 @@
+body { font-feature-settings: "ss01" on; }
+.card { border-color: #444; }
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px var(--glow-color, rgba(255,255,255,0.4)); }
+  50%      { box-shadow: 0 0 15px var(--glow-color, rgba(255,255,255,0.8)); }
+}
+.glow {
+  animation: pulse-glow 1.5s infinite;
+}

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>TuxTrader Monitor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Tailwind CSS (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            orange: { 500: '#ff6200', 600: '#ff4d00' }
+          }
+        }
+      }
+    }
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="bg-zinc-900 text-zinc-100">
+  <!-- Top bar -->
+  <header class="sticky top-0 z-50 bg-zinc-900/90 backdrop-blur border-b border-zinc-800">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+      <h1 class="text-lg font-semibold flex items-center gap-2">
+        <span>🪙 TuxTrader Monitor</span>
+        <span id="statusBadge" class="text-xs px-2 py-1 rounded-full bg-zinc-800 text-zinc-300">Loading…</span>
+      </h1>
+
+      <!-- Portfolio status bar -->
+      <div id="portfolioBar" class="flex items-center gap-4 text-sm">
+        <div class="flex items-center gap-1">
+          <span class="text-zinc-400">Available USDC</span>
+          <span id="usdcAvailable" class="font-semibold">—</span>
+        </div>
+        <div class="flex items-center gap-1">
+          <span class="text-zinc-400">Holdings</span>
+          <span id="holdingsValue" class="font-semibold">—</span>
+        </div>
+        <div class="flex items-center gap-1">
+          <span class="text-zinc-400">Total</span>
+          <span id="grandTotal" class="font-semibold text-orange-500">—</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main -->
+<main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+
+  <!-- 1) Coin info (balances + manual command) -->
+  <section class="bg-zinc-800/60 border border-zinc-800 rounded-xl overflow-hidden">
+    <div class="px-4 py-3 border-b border-zinc-700 font-semibold">Balances</div>
+    <div class="p-4">
+    <table class="w-full text-sm">
+    <thead class="text-zinc-400">
+        <tr>
+        <th class="text-left py-2">Coin</th>
+        <th class="text-left py-2">Signals</th>
+        <th class="text-right py-2">Value</th>
+        </tr>
+    </thead>
+    <tbody id="balancesTbody" class="divide-y divide-zinc-800"></tbody>
+    </table>
+    </div>
+
+    <div class="px-4 py-3 border-t border-zinc-700 font-semibold">Manual Command</div>
+    <div class="p-4">
+      <form id="cmdForm" class="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <input class="col-span-2 md:col-span-2 bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm"
+               name="symbol" placeholder="USDC-EUR" required />
+        <select class="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm" name="action" required>
+          <option>BUY</option><option>SELL</option><option>CANCEL</option>
+        </select>
+        <input class="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm"
+               name="amount" type="number" step="0.0001" placeholder="Amount" />
+        <button class="bg-orange-500 hover:bg-orange-600 rounded px-3 py-2 text-sm font-semibold">Send</button>
+      </form>
+      <div id="cmdNote" class="text-xs text-green-400 mt-2 hidden">Sent ✔</div>
+    </div>
+  </section>
+
+  <!-- 2) Price chart -->
+  <section class="bg-zinc-800/60 border border-zinc-800 rounded-xl overflow-hidden">
+    <div class="px-4 py-3 border-b border-zinc-700 flex items-center gap-2">
+      <span class="font-semibold">Price</span>
+      <select id="symbolSelect" class="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-sm"></select>
+      <select id="hoursSelect" class="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-sm">
+        <option value="6">6h</option>
+        <option value="24" selected>24h</option>
+        <option value="72">72h</option>
+        <option value="168">7d</option>
+      </select>
+    </div>
+    <div class="p-4">
+      <canvas id="priceChart" class="w-full h-64"></canvas>
+    </div>
+  </section>
+
+  <!-- 3) Recent trades -->
+  <section class="bg-zinc-800/60 border border-zinc-800 rounded-xl overflow-hidden">
+    <div class="px-4 py-3 border-b border-zinc-700 font-semibold">Recent Trades</div>
+    <div class="p-4 overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="text-zinc-400">
+          <tr>
+            <th class="text-left py-2">Time</th>
+            <th class="text-left py-2">Symbol</th>
+            <th class="text-left py-2">Side</th>
+            <th class="text-right py-2">Amount</th>
+            <th class="text-right py-2">Price</th>
+          </tr>
+        </thead>
+        <tbody id="tradesTbody" class="divide-y divide-zinc-800"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+  <script src="/dashboard.js"></script>
+</body>
+</html>
