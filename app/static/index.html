@@ -28,7 +28,7 @@
   <header class="sticky top-0 z-50 bg-zinc-900/90 backdrop-blur border-b border-zinc-800">
     <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
       <h1 class="text-lg font-semibold flex items-center gap-2">
-        <span>🪙 TuxTrader Monitor</span>
+        <span>🐧 TuxTrader Monitor ₿</span>
         <span id="statusBadge" class="text-xs px-2 py-1 rounded-full bg-zinc-800 text-zinc-300">Loading…</span>
       </h1>
 
@@ -71,17 +71,34 @@
 
     <div class="px-4 py-3 border-t border-zinc-700 font-semibold">Manual Command</div>
     <div class="p-4">
-      <form id="cmdForm" class="grid grid-cols-2 md:grid-cols-5 gap-2">
-        <input class="col-span-2 md:col-span-2 bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm"
-               name="symbol" placeholder="USDC-EUR" required />
-        <select class="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm" name="action" required>
-          <option>BUY</option><option>SELL</option><option>CANCEL</option>
+      <form id="cmdForm" class="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
+        <!-- Enabled coins dropdown -->
+        <select id="cmdSymbol" name="symbol"
+                class="md:col-span-2 bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm"
+                required>
+          <!-- options injected by JS -->
         </select>
-        <input class="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm"
-               name="amount" type="number" step="0.0001" placeholder="Amount" />
-        <button class="bg-orange-500 hover:bg-orange-600 rounded px-3 py-2 text-sm font-semibold">Send</button>
+
+        <!-- Hidden action field; buttons set this and submit -->
+        <input type="hidden" id="cmdAction" name="action" value="BUY" />
+
+        <div class="flex gap-2 md:justify-end">
+          <button type="button" id="btnBuy"
+                  class="bg-emerald-600 hover:bg-emerald-700 rounded px-3 py-2 text-sm font-semibold">
+            BUY
+          </button>
+          <button type="button" id="btnSell"
+                  class="bg-rose-600 hover:bg-rose-700 rounded px-3 py-2 text-sm font-semibold">
+            SELL
+          </button>
+          <button type="button" id="btnCancel"
+                  class="bg-zinc-700 hover:bg-zinc-600 rounded px-3 py-2 text-sm font-semibold">
+            CANCEL
+          </button>
+        </div>
       </form>
       <div id="cmdNote" class="text-xs text-green-400 mt-2 hidden">Sent ✔</div>
+      <div id="cmdErr" class="text-xs text-rose-400 mt-2 hidden">Failed to send</div>
     </div>
   </section>
 

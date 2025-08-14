@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select, desc, and_
+from sqlalchemy import select, desc, and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from dotenv import load_dotenv
 
@@ -63,36 +63,34 @@ async def _price_at_or_after(session: AsyncSession, coin: str, since: datetime) 
     return D(v) if v is not None else None
 
 async def get_weighted_avg_buy_price(session: AsyncSession, symbol: str) -> float | None:
-    # DCA avg since last SELL
-    q_last_sell = (
-        select(Trade.timestamp)
+    """
+    Weighted average BUY price since the last SELL for `symbol`.
+    Returns None if there are no BUYs in scope.
+    """
+    # Subquery: last SELL timestamp for this symbol
+    last_sell_ts_sq = (
+        select(func.max(Trade.timestamp))
         .where(and_(Trade.symbol == symbol, Trade.side == "SELL"))
-        .order_by(desc(Trade.timestamp))
-        .limit(1)
+        .scalar_subquery()
     )
-    r = await session.execute(q_last_sell)
-    last_sell_ts = r.scalar_one_or_none()
 
-    if last_sell_ts:
-        q_buys = select(Trade.amount, Trade.price).where(
-            and_(Trade.symbol == symbol, Trade.side == "BUY", Trade.timestamp > last_sell_ts)
+    # WAP = sum(amount * price) / sum(amount) over BUYs after last SELL
+    numerator   = func.sum(Trade.amount * Trade.price)
+    denominator = func.nullif(func.sum(Trade.amount), 0)
+
+    q = (
+        select(numerator / denominator)
+        .where(
+            and_(
+                Trade.symbol == symbol,
+                Trade.side == "BUY",
+                or_(last_sell_ts_sq.is_(None), Trade.timestamp > last_sell_ts_sq),
+            )
         )
-    else:
-        q_buys = select(Trade.amount, Trade.price).where(and_(Trade.symbol == symbol, Trade.side == "BUY"))
+    )
 
-    rows = (await session.execute(q_buys)).all()
-    if not rows:
-        return None
-
-    num = den = 0.0
-    for amt, price in rows:
-        if amt is None or price is None:
-            continue
-        num += float(amt) * float(price)
-        den += float(amt)
-    if den == 0.0:
-        return None
-    return round(num / den, 8)
+    val = (await session.execute(q)).scalar_one_or_none()
+    return None if val is None else round(float(val), 8)
 
 async def get_last_sell_price(session: AsyncSession, symbol: str) -> Decimal | None:
     r = await session.execute(
@@ -133,62 +131,55 @@ async def coins_badges(session: AsyncSession = Depends(get_session), lookback_ho
         price_now = await _latest_price(session, coin)
         price_ref_window = await _price_at_or_after(session, coin, since)
 
-        # DCA avg & targets
+        # portfolio value & eligibility FIRST (so we can use `eligible` below)
+        position_usdc = (amount * price_now) if (price_now is not None) else None
+        eligible = (position_usdc is not None and position_usdc >= D("1"))
+
+        # DCA & INITIAL
         dca_avg = await get_weighted_avg_buy_price(session, coin)
         dca_avg_D = D(dca_avg) if dca_avg is not None else None
+        init_price = initial_map.get(coin)  # from trading_state fetched earlier
 
         sell_pct = D(cfg.coins[coin].sell_percentage) if coin in cfg.coins else D(cfg.sell_percentage)
         buy_pct  = D(cfg.coins[coin].buy_percentage)  if coin in cfg.coins else D(cfg.buy_percentage)
         rebuy_disc = D(cfg.coins[coin].rebuy_discount) if coin in cfg.coins else D("0")
 
-        # prefer DCA for sell target; fall back to INITIAL so it's defined even if no DCA
-        base_for_sell = dca_avg_D if dca_avg_D is not None else initial_map.get(coin)
-        sell_target   = (base_for_sell * (D("1") + sell_pct / D("100"))) if base_for_sell is not None else None
-
-        last_sell_price = await get_last_sell_price(session, coin)
-        rebuy_level = (last_sell_price * (D("1") - rebuy_disc / D("100"))) if (last_sell_price is not None) else None
-
-        position_usdc = (amount * price_now) if (price_now is not None) else None
-        eligible = (position_usdc is not None and position_usdc >= D("1"))  # has holdings ≥ $1
-
-        # --- FIX: choose reference for target distance correctly ---
-        # If we HOLD: DCA → INITIAL → LAST_SELL
-        # If we DON'T HOLD: INITIAL → LAST_SELL → DCA
-        ref_price = None
-        ref_kind = None
+        # STRICT reference: held -> DCA only; unheld -> INITIAL only
         if eligible:
-            if dca_avg_D is not None:
-                ref_price, ref_kind = dca_avg_D, "DCA"
-            elif initial_map.get(coin) is not None:
-                ref_price, ref_kind = initial_map[coin], "INITIAL"
-            elif last_sell_price is not None:
-                ref_price, ref_kind = last_sell_price, "LAST_SELL"
+            ref_price = dca_avg_D
+            ref_kind = "DCA" if dca_avg_D is not None else None
         else:
-            if initial_map.get(coin) is not None:
-                ref_price, ref_kind = initial_map[coin], "INITIAL"
-            elif last_sell_price is not None:
-                ref_price, ref_kind = last_sell_price, "LAST_SELL"
-            elif dca_avg_D is not None:
-                ref_price, ref_kind = dca_avg_D, "DCA"
+            ref_price = init_price
+            ref_kind = "INITIAL" if init_price is not None else None
 
-        # distance to SELL target (unchanged)
-        distance_sell_pct = None
-        if price_now is not None and sell_target is not None and price_now != 0:
-            distance_sell_pct = ((sell_target / price_now) - D("1")) * D("100")
+        current_pct_from_ref = None
+        if price_now is not None and ref_price not in (None, D("0")):
+            current_pct_from_ref = ((price_now / ref_price) - D("1")) * D("100")
+
+        # SELL target: only when holding AND we have DCA
+        sell_target = (dca_avg_D * (D("1") + sell_pct / D("100"))) if (eligible and dca_avg_D is not None) else None
+
+        # BUY target: only when NOT holding; base on INITIAL (fallback to current price)
+        base_for_buy = init_price if (not eligible) else None
+        if base_for_buy is None and not eligible:
+            base_for_buy = price_now
+        buy_target = (base_for_buy * (D("1") + buy_pct / D("100"))) if base_for_buy is not None else None
+
+        # Rebuy level:
+        #  - If HOLDING: dip-add below DCA
+        #  - If NOT holding: re-enter below LAST SELL (if it exists)
+        last_sell_price = await get_last_sell_price(session, coin)  # may be None if never sold
+        base_for_rebuy = dca_avg_D if eligible else last_sell_price
+        rebuy_level = (
+            base_for_rebuy * (D("1") - rebuy_disc / D("100"))
+            if base_for_rebuy not in (None, D("0"))
+            else None
+        )
 
         # 24h change (unchanged)
         change_24h_pct = None
         if price_now is not None and price_ref_window not in (None, D("0")):
             change_24h_pct = ((price_now / price_ref_window) - D("1")) * D("100")
-
-        # % from chosen reference (this feeds your Target Δ% badge)
-        current_pct_from_ref = None
-        if price_now is not None and ref_price not in (None, D("0")):
-            current_pct_from_ref = ((price_now / ref_price) - D("1")) * D("100")
-
-        # Also ensure BUY target exists when DCA is missing: use chosen ref (INITIAL for unheld)
-        base_for_buy = ref_price if ref_price is not None else price_now
-        buy_target   = (base_for_buy * (D("1") + buy_pct / D("100"))) if base_for_buy is not None else None
 
         rows.append({
             "coin": coin,
@@ -196,7 +187,6 @@ async def coins_badges(session: AsyncSession = Depends(get_session), lookback_ho
             "price_usdc": str(price_now) if price_now is not None else None,
             "change_24h_pct": str(change_24h_pct.quantize(D('0.01'))) if change_24h_pct is not None else None,
 
-            # targets & config
             "dca_avg": str(dca_avg_D) if dca_avg_D is not None else None,
             "sell_pct": str(sell_pct),
             "sell_target": str(sell_target) if sell_target is not None else None,
@@ -205,11 +195,9 @@ async def coins_badges(session: AsyncSession = Depends(get_session), lookback_ho
             "rebuy_discount": str(rebuy_disc),
             "rebuy_level": str(rebuy_level) if rebuy_level is not None else None,
 
-            # portfolio
             "position_usdc": str(position_usdc) if position_usdc is not None else None,
             "total_profit": str(profit_map.get(coin, D("0"))),
 
-            # reference for target distance badge (now correct for unheld coins)
             "ref_kind": ref_kind,
             "current_pct_from_ref": str(current_pct_from_ref.quantize(D('0.01'))) if current_pct_from_ref is not None else None,
 
@@ -280,17 +268,30 @@ async def balances(session: AsyncSession = Depends(get_session)):
     items = await crud.get_balances(session)
     return [BalanceOut(currency=i.currency, available_balance=i.available_balance) for i in items]
 
-@app.get("/api/trades", response_model=List[TradeOut])
-async def trades(
-    limit: int = Query(50, ge=1, le=500),
-    symbol: Optional[str] = None,
+def row_to_dict(t: Trade):
+    return {
+        "id": t.id,
+        "symbol": t.symbol,
+        "side": t.side,
+        "amount": float(t.amount) if t.amount is not None else None,
+        "price": float(t.price) if t.price is not None else None,
+        "timestamp": t.timestamp.isoformat() if t.timestamp else None,
+    }
+
+@app.get("/api/trades")
+async def api_trades(
     session: AsyncSession = Depends(get_session),
+    limit: int = Query(20, ge=1, le=200),
+    symbol: str | None = None,   # optional filter
 ):
-    ts = await crud.get_trades(session, limit=limit, symbol=symbol)
-    return [TradeOut(**{
-        "id": t.id, "symbol": t.symbol, "side": t.side, "amount": t.amount,
-        "price": t.price, "timestamp": t.timestamp
-    }) for t in ts]
+    q = select(Trade)
+    if symbol:
+        q = q.where(Trade.symbol == symbol.upper())
+    q = q.order_by(desc(Trade.timestamp)).limit(limit)
+
+    res = await session.execute(q)
+    trades = [row_to_dict(t) for t in res.scalars().all()]
+    return {"trades": trades}
 
 @app.get("/api/price_history", response_model=PriceSeries)
 async def price_history(
@@ -316,8 +317,32 @@ async def state(symbol: Optional[str] = None, session: AsyncSession = Depends(ge
 
 @app.post("/api/manual_commands")
 async def manual_commands(cmd: ManualCommandIn, session: AsyncSession = Depends(get_session)):
-    saved = await crud.insert_manual_command(session, cmd.symbol, cmd.action, cmd.amount)
-    return {"ok": True, "id": saved.id}
+    from sqlalchemy import text
+
+    symbol = cmd.symbol.upper().strip()
+    action = cmd.action.upper().strip()
+
+    if action == "CANCEL":
+        # Mark all unexecuted manual commands for this symbol as executed
+        await session.execute(text("""
+            UPDATE manual_commands
+            SET executed = true
+            WHERE symbol = :symbol
+              AND executed = false
+        """), {"symbol": symbol})
+        await session.commit()
+        return {"ok": True, "message": f"Cancelled pending commands for {symbol}"}
+
+    # Otherwise: BUY or SELL → insert new command
+    res = await session.execute(text("""
+        INSERT INTO manual_commands (symbol, action, executed)
+        VALUES (:symbol, :action, false)
+        RETURNING id
+    """), {"symbol": symbol, "action": action})
+
+    new_id = res.scalar_one()
+    await session.commit()
+    return {"ok": True, "id": new_id}
 
 # --- WebSocket live feed (polling backend, simple + reliable) ---
 class ConnectionManager:

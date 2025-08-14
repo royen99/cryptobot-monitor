@@ -4,13 +4,23 @@ const tradesBody = document.getElementById("tradesTbody");
 const symbolSelect = document.getElementById("symbolSelect");
 const hoursSelect = document.getElementById("hoursSelect");
 const cmdForm = document.getElementById("cmdForm");
+const cmdSymbol = document.getElementById("cmdSymbol");
+const cmdAction = document.getElementById("cmdAction");
+const btnBuy = document.getElementById("btnBuy");
+const btnSell = document.getElementById("btnSell");
+const btnCancel = document.getElementById("btnCancel");
 const cmdNote = document.getElementById("cmdNote");
+const cmdErr = document.getElementById("cmdErr");
 
 const usdcEl = document.getElementById("usdcAvailable");
 const holdingsEl = document.getElementById("holdingsValue");
 const totalEl = document.getElementById("grandTotal");
 
 let enabledCoins = [];
+
+let lastTradesRefresh = 0;
+const TRADES_REFRESH_MS = 3000; // throttle to max once every 3s
+let lastTradeStamp = null;      // remember last trade timestamp seen via WS/status
 
 function setStatus(active, last_trade) {
   STATUS.textContent = active ? `Active • ${last_trade || ""}` : "Idle";
@@ -252,15 +262,24 @@ function renderBalances(items) {
   balancesBody.innerHTML = rows.join("");
 }
 
-function renderTrades(items) {
-  tradesBody.innerHTML = items
-    .map(t => `<tr class="hover:bg-zinc-800/50">
+async function fetchAndRenderTrades(limit = 20) {
+  const res = await fetch(`/api/trades?limit=${limit}`, { cache: "no-store" });
+  const data = await res.json();
+  renderTrades(data.trades);           // pass the array only
+}
+
+function renderTrades(items = []) {
+  tradesBody.innerHTML = (items || []).map(t => `
+    <tr class="hover:bg-zinc-800/50">
       <td class="py-2">${t.timestamp ? new Date(t.timestamp).toLocaleString() : ""}</td>
       <td class="py-2">${t.symbol || ""}</td>
-      <td class="py-2 ${t.side === "BUY" ? "text-emerald-400" : "text-rose-400"}">${t.side || ""}</td>
+      <td class="py-2 ${String(t.side).toUpperCase() === "BUY" ? "text-emerald-400" : "text-rose-400"}">
+        ${t.side || ""}
+      </td>
       <td class="py-2 text-right">${t.amount != null ? fmt(t.amount, 6) : ""}</td>
-      <td class="py-2 text-right">${t.price != null ? fmt(t.price, 6) : ""}</td>
-    </tr>`).join("");
+      <td class="py-2 text-right">${t.price  != null ? fmt(t.price,  6) : ""}</td>
+    </tr>
+  `).join("");
 }
 
 async function refreshSummary() {
@@ -317,6 +336,8 @@ function valueBadgeFor(coin, amt) {
     cls = "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/50"; // green
   } else if (value >= 100) {
     cls = "bg-blue-500/20 text-blue-300 ring-1 ring-blue-500/50"; // blue
+  } else if (value >= 10) {
+    cls = "bg-indigo-500/20 text-indigo-300 ring-1 ring-indigo-500/50"; // indigo
   }
 
   const label = `$ ${fmt(value, 2)} (${fmt(amt, 6)} ${coin})`;
@@ -333,12 +354,19 @@ async function bootstrap() {
   const cfg = await fetchJSON("/api/config/info").catch(() => null);
   enabledCoins = (cfg?.coins || []).map(c => c.toUpperCase());
 
+  populateCmdSymbols();
+
+  btnBuy.addEventListener("click", () => submitManualCommand("BUY"));
+  btnSell.addEventListener("click", () => submitManualCommand("SELL"));
+  btnCancel.addEventListener("click", () => submitManualCommand("CANCEL"));
+
   await refreshBadges();
   renderBalances(await fetchJSON("/api/balances"));
 
   await loadSymbols();
   await renderPrice(symbolSelect.value, hoursSelect.value);
-  renderTrades(await fetchJSON("/api/trades?limit=20"));
+  
+  await fetchAndRenderTrades(20);
 
   // WS setup
   const BADGE_REFRESH_MS = 5000;
@@ -351,30 +379,48 @@ async function bootstrap() {
     }
   }
 
-  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/live`);
-  ws.onopen = () => ws.send(JSON.stringify({ subscribe: [symbolSelect.value] }));
+  function connectWS() {
+    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/live`);
+    ws.onopen = () => {
+      try { ws.send(JSON.stringify({ subscribe: [symbolSelect.value] })); } catch {}
+    };
 
-  ws.onmessage = async (ev) => {
-    const msg = JSON.parse(ev.data);
-    if (msg.type !== "tick") return;
+    ws.onmessage = async (ev) => {
+      const msg = JSON.parse(ev.data);
+      if (msg.type !== "tick") return;
 
-    setStatus(msg.status?.active, msg.status?.last_trade);
+      // 1) status bar
+      setStatus(msg.status?.active, msg.status?.last_trade);
 
-    // If trades or balances changed, refresh badges
-    if (Array.isArray(msg.trades) || Array.isArray(msg.balances)) {
-      await maybeRefreshBadges();
-    }
+      // 2) If status.last_trade changed, force-refresh trades immediately
+      if (msg.status?.last_trade && msg.status.last_trade !== lastTradeStamp) {
+        lastTradeStamp = msg.status.last_trade;
+        await fetchAndRenderTrades(20);
+      } else {
+        // Otherwise refresh on any tick, but throttled
+        const now = Date.now();
+        if (now - lastTradesRefresh >= TRADES_REFRESH_MS) {
+          await fetchAndRenderTrades(20);
+          lastTradesRefresh = now;
+        }
+      }
 
-    if (Array.isArray(msg.trades)) {
-      renderTrades(msg.trades);
-    }
+      // 3) balances → badges & balances table (throttled badges)
+      if (Array.isArray(msg.balances)) {
+        await maybeRefreshBadges();
+        renderBalances(msg.balances);
+      }
 
-    if (Array.isArray(msg.balances)) {
-      renderBalances(msg.balances); // badges already up-to-date
-    }
+      // 4) totals
+      refreshSummary();
+    };
 
-    refreshSummary();
-  };
+    // auto-reconnect
+    ws.onclose = () => setTimeout(connectWS, 1500);
+    ws.onerror  = () => { try { ws.close(); } catch {} };
+  }
+
+  connectWS();
 
   // Symbol/hour selectors
   symbolSelect.addEventListener("change", async () => {
@@ -386,26 +432,46 @@ async function bootstrap() {
     renderPrice(symbolSelect.value, hoursSelect.value);
   });
 
+  function populateCmdSymbols() {
+    if (!Array.isArray(enabledCoins) || enabledCoins.length === 0) return;
+    // Only coins (exclude USDC)
+    const opts = enabledCoins
+      .filter(c => c !== "USDC")
+      .map(c => `<option value="${c}">${c}</option>`)
+      .join("");
+    cmdSymbol.innerHTML = opts || `<option value="" disabled>No enabled coins</option>`;
+  }
+
   // Manual command form
-  cmdForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const fd = new FormData(cmdForm);
-    const payload = {
-      symbol: fd.get("symbol"),
-      action: fd.get("action"),
-      amount: fd.get("amount") ? Number(fd.get("amount")) : null
-    };
-    const res = await fetch("/api/manual_commands", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) {
+  async function submitManualCommand(action) {
+    const symbol = cmdSymbol.value;
+    if (!symbol) return;
+
+    cmdNote.classList.add("hidden");
+    cmdErr.classList.add("hidden");
+
+    // Disable buttons during send
+    [btnBuy, btnSell, btnCancel].forEach(b => b.disabled = true);
+
+    try {
+      const res = await fetch("/api/manual_commands", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, action })   // ← only symbol + action
+      });
+      if (!res.ok) throw new Error(await res.text());
       cmdNote.classList.remove("hidden");
       setTimeout(() => cmdNote.classList.add("hidden"), 1500);
-      cmdForm.reset();
+    } catch (e) {
+      console.error(e);
+      cmdErr.textContent = "Failed to send";
+      cmdErr.classList.remove("hidden");
+      setTimeout(() => cmdErr.classList.add("hidden"), 2500);
+    } finally {
+      [btnBuy, btnSell, btnCancel].forEach(b => b.disabled = false);
     }
-  });
+  }
+
 }
 
 bootstrap();
