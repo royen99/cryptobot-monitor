@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  monitor:
+    image: royen99/cryptobot-monitor:latest  # From Docker Hub
+    restart: unless-stopped
+    environment:
+      CONFIG_PATH: /config/config.json  # Path inside container
+    volumes:
+      # Mount your local config file (adjust path as needed)
+      - ./env/config.json:/config/config.json:ro
+
+  # To pair this with the actual trading bot, add
+  trader:
+    image: royen99/cryptobot-trader:latest  # From Docker Hub
+    restart: unless-stopped
+    environment:
+      REQUEST_HOST: api.coinbase.com    # Production Coinbase API host
+      DEBUG_MODE: "false"
+      CONFIG_PATH: /config/config.json  # Path inside container
+    volumes:
+      # Mount your local config file (adjust path as needed)
+      - ./env/config.json:/config/config.json:ro

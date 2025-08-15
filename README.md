@@ -8,16 +8,39 @@ This project is a dashboard for monitoring via the TuxTrader trading bot, provid
 [![Stars](https://img.shields.io/github/stars/royen99/cryptobot-monitor?logo=github)](https://github.com/royen99/cryptobot-monitor)
 
 ## Features
-- Real-time trade updates
-- Portfolio status tracking
-- Performance metrics visualization
-- Responsive design for desktop and mobile
-- User-friendly interface
-- Simple trade logging
-- Allows manual trade execution (buy/sell/cancel)
+✅ Real-time trade updates \
+✅ Portfolio status tracking \
+✅ Performance metrics visualization \
+✅ Responsive design for desktop and mobile \
+✅ User-friendly interface \
+✅ Simple trade logging \
+✅ Allows manual trade execution (buy/sell/cancel)
 
 ## Example UI Screenshot
 ![Example UI Screenshot](https://github.com/royen99/cryptobot-monitor/blob/main/mainview.png?raw=true)
+
+## Installation
+
+### Prerequisites
+Since this monitor should work with the Cryptobot-trader, you need to have the trading bot set up and running. Follow the instructions in the [Trader](https://github.com/royen99/cryptobot-trader) repository to get it up and running.
+
+Use the supplied config.json.template file for your database connection settings, and other configurations. \
+Make sure to rename it to `config.json` and fill in your details and place it in the appropriate directory (.env by default). 
+
+The `config.json` file uses the exact same format as the Cryptobot-trader (you can also use the same docker volume).
+
+The provided sample Docker Compose file (`docker-compose-sample.yml`) can be used as a starting point. Adjust the configuration as needed for your environment. \
+It is also setup to start both the monitor and trader services (modify as needed).
+
+1. Use the Docker Compose file to start the services:
+   ```bash
+   docker-compose -f docker-compose-sample.yml up -d
+   ```
+
+2. Run the Docker container directly:
+   ```bash
+   docker run -d --name cryptobot-monitor -p 8080:8080 royen99/cryptobot-monitor:latest
+   ```
 
 ## Donations
 If you find this project useful and would like to support its development, consider making a donation:
