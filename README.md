@@ -6,6 +6,7 @@ This project is a dashboard for monitoring via the TuxTrader trading bot, provid
 [![Docker Pulls](https://img.shields.io/docker/pulls/royen99/cryptobot-monitor?logo=docker)](https://hub.docker.com/r/royen99/cryptobot-monitor)
 [![CI/CD](https://github.com/royen99/cryptobot-monitor/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/royen99/cryptobot-monitor/actions/workflows/docker-publish.yml)
 [![Stars](https://img.shields.io/github/stars/royen99/cryptobot-monitor?logo=github)](https://github.com/royen99/cryptobot-monitor)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
 ✅ Real-time trade updates \
