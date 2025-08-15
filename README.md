@@ -43,6 +43,13 @@ It is also setup to start both the monitor and trader services (modify as needed
    docker run -d --name cryptobot-monitor -p 8080:8080 royen99/cryptobot-monitor:latest
    ```
 
+## Supported Platforms  
+
+✅ **Mac (Intel/Apple Silicon)**  
+✅ **Linux (AMD64/ARM64)**  
+✅ **Raspberry Pi (ARMv7/ARM64)**  
+
+
 ## Donations
 If you find this project useful and would like to support its development, consider making a donation:
 
