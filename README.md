@@ -46,5 +46,7 @@ It is also setup to start both the monitor and trader services (modify as needed
 ## Donations
 If you find this project useful and would like to support its development, consider making a donation:
 
-- My BTC wallet: `bc1qy5wu6vrxpclycl2y0wgnjjdxfd2qde7xemphgt`
+- BTC: `bc1qy5wu6vrxpclycl2y0wgnjjdxfd2qde7xemphgt`
+- ETH: `0xe9128E8cc47bCab918292E2a0aE0C25971bb61EA`
+- SOL: `ASwSbGHvcvebyPEUJRoE9aq3b2H2oJSaM7GsZAt83bjR`
 - Via [CoinBase](https://commerce.coinbase.com/checkout/00370bad-7220-4115-b15f-cda931756c6a)
