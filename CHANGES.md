@@ -10,3 +10,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Initial release of the CryptoBot Monitor.
 - Donation section to README.md files for both trader and monitor.
 - Add a changelog file to the project 🚀
+- Extend docker images to support multiple architectures.
