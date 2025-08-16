@@ -1,23 +1,60 @@
 version: "3.9"
 
 services:
-  monitor:
-    image: royen99/cryptobot-monitor:latest  # From Docker Hub
+  # Database (PostgreSQL)
+  db:
+    image: docker.io/postgres:15-alpine
     restart: unless-stopped
     environment:
-      CONFIG_PATH: /config/config.json  # Path inside container
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: tradepw
+      POSTGRES_DB: trading
     volumes:
-      # Mount your local config file (adjust path as needed)
-      - ./env/config.json:/config/config.json:ro
+      - pg_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - cryptonet
+    ports:
+      - "5432:5432"
 
-  # To pair this with the actual trading bot, add
+  # Trader Service
   trader:
-    image: royen99/cryptobot-trader:latest  # From Docker Hub
+    image: docker.io/royen99/cryptobot-trader:latest
     restart: unless-stopped
     environment:
-      REQUEST_HOST: api.coinbase.com    # Production Coinbase API host
+      REQUEST_HOST: api.coinbase.com
       DEBUG_MODE: "false"
-      CONFIG_PATH: /config/config.json  # Path inside container
+      CONFIG_PATH: /config/config.json
+      DB_HOST: db
+      DB_PORT: 5432
     volumes:
-      # Mount your local config file (adjust path as needed)
-      - ./env/config.json:/config/config.json:ro
+      - ./.env/config.json:/config/config.json:ro
+    networks:
+      - cryptonet
+    depends_on:
+      - db
+
+  # Monitor Service
+  monitor:
+    image: docker.io/royen99/cryptobot-monitor:latest
+    restart: unless-stopped
+    ports: ["8080:8080"]
+    environment:
+      CONFIG_PATH: /config/config.json
+      DB_HOST: db
+      DB_PORT: 5432
+    volumes:
+      - ./.env/config.json:/config/config.json:ro
+    networks:
+      - cryptonet
+    depends_on:
+      - db
+      - trader
+
+# Networks and Volumes
+networks:
+  cryptonet:
+    driver: bridge
+
+volumes:
+  pg_data:

@@ -33,12 +33,66 @@ The `config.json` file uses the exact same format as the Cryptobot-trader (you c
 The provided sample Docker Compose file (`docker-compose-sample.yml`) can be used as a starting point. Adjust the configuration as needed for your environment. \
 It is also setup to start both the monitor and trader services (modify as needed).
 
+## The easy podman way (Ubuntu)
+
+### Install Podman and Podman Compose:
+   ```bash
+   sudo apt update
+   sudo apt install -y podman podman-compose
+   ```
+
+### Setup config files
+Create a directory for your environment files:
+   ```bash
+   mkdir -p cryptotrader && cd cryptotrader
+   mkdir -p .env
+   ```
+Create a `config.json` file in the `.env` directory and fill in your details. You can use the `config.json.template` file as a reference.
+
+If you're starting fresh, ensure that the `init.sql` file is also in your current directory.
+
+### Use the Podman Compose file to start the services:
+Note that the `docker-compose-sample.yml` file is compatible with Podman Compose, so you can use it directly and is setup to start all the necessary services (db, trader, monitor) in one go.
+
+   ```bash
+   podman-compose -f docker-compose-sample.yml up -d
+   ```
+
+### Verify the services are running:
+   ```bash
+   podman ps
+   CONTAINER ID  IMAGE                     COMMAND               CREATED         STATUS         PORTS                   NAMES
+   b1b73c377c8e  postgres:15-alpine        postgres              11 seconds ago  Up 11 seconds  0.0.0.0:5432->5432/tcp  db_1
+   ed6f6678fbbc  cryptobot-trader:latest   python app/main.p...  8 seconds ago   Up 8 seconds                           trader_1
+   7d65ae95c99f  cryptobot-monitor:latest  uvicorn app.main:...  6 seconds ago   Up 5 seconds   0.0.0.0:8080->8080/tcp  monitor_1
+   ```
+
+To access the Dashboard, you can access the monitor's web interface at `http://localhost:8080`.
+
+Following up on the trading bot's output, use podman's log option:
+
+```bash
+podman logs -f trader_1
+💰 Available Balances:
+  - ETH: 1.4173876
+  - XRP: 102.0
+  - USDC: 730.50
+📉 ETH Falling Streak: 2
+🚀 ETH - Current Price: $4398.81 (-3.72%), Peak Price: $4627.26, Trailing Stop Price: $4580.99
+📊  - ETH Avg buy price: None | Slope: -6.799999999999272 | Performance - Total Trades: 47 | Total Profit: $31.05
+📉 XRP Falling Streak: 2
+🚀 XRP - Current Price: $3.1388 (-1.99%), Peak Price: $3.1573, Trailing Stop Price: $3.1415
+📊  - XRP Avg buy price: 3.089442811908925 | Slope: -0.0026000000000001577 | Performance - Total Trades: 134 | Total Profit: $62.28
+```
+
+### Docker Way
+
 1. Use the Docker Compose file to start the services:
    ```bash
    docker-compose -f docker-compose-sample.yml up -d
    ```
 
-2. Run the Docker container directly:
+2. Run the Monitor Docker container directly:
    ```bash
    docker run -d --name cryptobot-monitor -p 8080:8080 royen99/cryptobot-monitor:latest
    ```
@@ -47,7 +101,7 @@ It is also setup to start both the monitor and trader services (modify as needed
 
 ✅ **Mac (Intel/Apple Silicon)**  
 ✅ **Linux (AMD64/ARM64)**  
-✅ **Raspberry Pi (ARMv7/ARM64)**  
+✅ **Raspberry Pi (ARMv7/ARM64)**  (Tested on Raspberry Pi 4 Model B/Ubuntu 24.04.3 LTS)
 
 
 ## Donations
