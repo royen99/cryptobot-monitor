@@ -3,7 +3,8 @@ from typing import Optional, List
 from decimal import Decimal, ROUND_HALF_UP
 from functools import lru_cache
 from datetime import datetime, timedelta
-from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, Query
+from pydantic import BaseModel
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, desc, and_, func, or_
@@ -370,13 +371,14 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 @app.get("/api/config/info")
-def config_info():
+def config_info(resp: Response):
     cfg = get_config()
+    coins = sorted([s.upper() for s, c in cfg.coins.items() if getattr(c, "enabled", False)])
+
+    resp.headers["Cache-Control"] = "public, max-age=15"
+
     return {
-        "name": cfg.name,
-        "db_host": cfg.database.host,
-        "db_port": cfg.database.port,
-        "coins": sorted([s for s, c in cfg.coins.items() if c.enabled]),
+        "coins": coins
     }
 
 @app.websocket("/ws/live")
