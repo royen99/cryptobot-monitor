@@ -22,9 +22,50 @@ let lastTradesRefresh = 0;
 const TRADES_REFRESH_MS = 3000; // throttle to max once every 3s
 let lastTradeStamp = null;      // remember last trade timestamp seen via WS/status
 
-function setStatus(active, last_trade) {
-  STATUS.textContent = active ? `Active • ${last_trade || ""}` : "Idle";
-  STATUS.className = `text-xs px-2 py-1 rounded-full ${active ? "bg-emerald-700/40 text-emerald-300" : "bg-zinc-800 text-zinc-300"}`;
+let _lastSeenActiveAt = 0;
+let _lastTradeText = "";  // sticky last trade line
+let lastStatusFetch = 0;
+const STATUS_REFRESH_MS = 5000; // update at most every 5s
+
+function setStatus(active, last_trade, opts = {}) {
+  const graceMs = opts.graceMs ?? 70_000; // keep green up to 70s after last positive heartbeat
+  const now = Date.now();
+
+  // Record active heartbeat
+  if (active === true) _lastSeenActiveAt = now;
+
+  // Update trade text only if meaningful
+  const lt = (last_trade ?? "").trim();
+  const isMeaningful = lt && lt.toLowerCase() !== "no trades yet";
+  if (isMeaningful) _lastTradeText = lt;
+
+  // Effective active with grace
+  const effectiveActive =
+    active === true ||
+    (active == null && now - _lastSeenActiveAt < graceMs) ||
+    (active === false && now - _lastSeenActiveAt < graceMs);
+
+  STATUS.textContent = effectiveActive
+    ? `Active • ${_lastTradeText || ""}`.trim()
+    : "Idle" + (_lastTradeText ? ` • ${_lastTradeText}` : "");
+
+  STATUS.className = `text-xs px-2 py-1 rounded-full ${
+    effectiveActive
+      ? "bg-emerald-700/40 text-emerald-300"
+      : "bg-orange-700/40 text-orange-300"
+  }`;
+}
+
+async function fetchAndRenderStatus() {
+  const st = await fetchJSON("/api/status");
+  setStatus(Boolean(st.active), st.seconds_since_update ? `Last update: ${st.seconds_since_update} seconds ago` : "No trades yet");
+}
+async function maybeRefreshStatus(force = false) {
+  const now = Date.now();
+  if (force || now - lastStatusFetch >= STATUS_REFRESH_MS) {
+    await fetchAndRenderStatus();
+    lastStatusFetch = now;
+  }
 }
 
 function buyBadgeFor(coin) {
@@ -234,9 +275,9 @@ function renderBalances(items) {
     .map(coin => {
         const amt = map[coin] ?? 0;
         const valUSDC = amt * (badgeData[coin]?.price_usdc ?? 0);
-        const priceSig = priceBadgeFor(coin);     // (from earlier)
-        const sellSig  = renderBadgeFor(coin);    // existing “Sell ≥ …” (DCA-based)
-        const profitSig= profitBadgeFor(coin);    // NEW
+        const priceSig = priceBadgeFor(coin);
+        const sellSig  = renderBadgeFor(coin);
+        const profitSig= profitBadgeFor(coin);
         const valueSig  = valueBadgeFor(coin, amt);
 
         const hasHoldings = valUSDC >= 1;
@@ -347,7 +388,6 @@ function valueBadgeFor(coin, amt) {
 
 async function bootstrap() {
   const status = await fetchJSON("/api/status").catch(() => null);
-  setStatus(status?.active ?? false, status?.last_trade ?? "");
   await refreshSummary();
   setInterval(refreshSummary, 10000);
 
@@ -365,7 +405,8 @@ async function bootstrap() {
 
   await loadSymbols();
   await renderPrice(symbolSelect.value, hoursSelect.value);
-  
+
+  await fetchAndRenderStatus();
   await fetchAndRenderTrades(20);
 
   // WS setup
@@ -389,9 +430,6 @@ async function bootstrap() {
       const msg = JSON.parse(ev.data);
       if (msg.type !== "tick") return;
 
-      // 1) status bar
-      setStatus(msg.status?.active, msg.status?.last_trade);
-
       // 2) If status.last_trade changed, force-refresh trades immediately
       if (msg.status?.last_trade && msg.status.last_trade !== lastTradeStamp) {
         lastTradeStamp = msg.status.last_trade;
@@ -413,6 +451,9 @@ async function bootstrap() {
 
       // 4) totals
       refreshSummary();
+
+      // status
+      await maybeRefreshStatus();
     };
 
     // auto-reconnect
