@@ -275,9 +275,9 @@ function renderBalances(items) {
     .map(coin => {
         const amt = map[coin] ?? 0;
         const valUSDC = amt * (badgeData[coin]?.price_usdc ?? 0);
-        const priceSig = priceBadgeFor(coin);     // (from earlier)
-        const sellSig  = renderBadgeFor(coin);    // existing “Sell ≥ …” (DCA-based)
-        const profitSig= profitBadgeFor(coin);    // NEW
+        const priceSig = priceBadgeFor(coin);
+        const sellSig  = renderBadgeFor(coin);
+        const profitSig= profitBadgeFor(coin);
         const valueSig  = valueBadgeFor(coin, amt);
 
         const hasHoldings = valUSDC >= 1;

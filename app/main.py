@@ -177,7 +177,7 @@ async def coins_badges(session: AsyncSession = Depends(get_session), lookback_ho
             else None
         )
 
-        # 24h change (unchanged)
+        # 24h change
         change_24h_pct = None
         if price_now is not None and price_ref_window not in (None, D("0")):
             change_24h_pct = ((price_now / price_ref_window) - D("1")) * D("100")
@@ -259,13 +259,6 @@ async def portfolio_summary(session: AsyncSession = Depends(get_session)):
         "breakdown": breakdown
     }
 
-# app/main.py
-from sqlalchemy import select, func, and_, desc
-from datetime import datetime, timedelta
-from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-
-# shape you already hinted at
 class BotStatusOut(BaseModel):
     active: bool
     last_trade: str | None = None
@@ -340,7 +333,7 @@ def row_to_dict(t: Trade):
 async def api_trades(
     session: AsyncSession = Depends(get_session),
     limit: int = Query(20, ge=1, le=200),
-    symbol: str | None = None,   # optional filter
+    symbol: str | None = None,
 ):
     q = select(Trade)
     if symbol:
@@ -452,11 +445,8 @@ async def ws_live(websocket: WebSocket):
             subs = []
 
         while True:
-            # lightweight poll every 2s; you can replace with LISTEN/NOTIFY later
             await asyncio.sleep(2)
             # Only fetch minimal stuff for live update
-            # (status + last 10 trades + balances; limit symbols if subscribed)
-            # NOTE: use a short-lived session inside loop
             async for session in get_session():
                 status = await crud.get_status(session)
                 trades = await crud.get_trades(session, limit=10, symbol=subs[0] if len(subs)==1 else None)
