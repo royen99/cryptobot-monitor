@@ -259,10 +259,67 @@ async def portfolio_summary(session: AsyncSession = Depends(get_session)):
         "breakdown": breakdown
     }
 
-@app.get("/api/status", response_model=BotStatusOut | None)
+# app/main.py
+from sqlalchemy import select, func, and_, desc
+from datetime import datetime, timedelta
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# shape you already hinted at
+class BotStatusOut(BaseModel):
+    active: bool
+    last_trade: str | None = None
+    last_price_update: str | None = None
+    seconds_since_update: float | None = None
+    updated_symbols_last_min: int | None = None
+    expected_enabled_symbols: int | None = None
+
+@app.get("/api/status", response_model=BotStatusOut)
 async def status(session: AsyncSession = Depends(get_session)):
-    s = await crud.get_status(session)
-    return None if not s else BotStatusOut(id=s.id, last_trade=s.last_trade, active=s.active)
+    now = datetime.utcnow()
+    cutoff = now - timedelta(seconds=60)
+
+    # latest price update across all symbols
+    q_latest_ts = select(func.max(PriceHistory.timestamp))
+    latest_ts = (await session.execute(q_latest_ts)).scalar_one_or_none()
+
+    # how many distinct symbols updated in the last minute
+    q_distinct = (
+        select(func.count(func.distinct(PriceHistory.symbol)))
+        .where(PriceHistory.timestamp >= cutoff)
+    )
+    updated_symbols = (await session.execute(q_distinct)).scalar_one()
+
+    # optional: enabled symbol count for context
+    cfg = get_config()
+    enabled_symbols = sum(1 for _, c in cfg.coins.items() if getattr(c, "enabled", False) and _.upper() != "USDC")
+
+    # “active” if we’ve seen any price in the last minute
+    active = (updated_symbols or 0) >= max(1, min(1, enabled_symbols))
+
+    # last trade pretty string (latest across all coins)
+    q_last_trade = (
+        select(Trade.symbol, Trade.side, Trade.amount, Trade.price, Trade.timestamp)
+        .order_by(desc(Trade.timestamp))
+        .limit(1)
+    )
+    lt = (await session.execute(q_last_trade)).first()
+    last_trade = None
+    if lt:
+        sym, side, amt, price, ts = lt
+        when = ts.isoformat() if ts else ""
+        last_trade = f"{when}: {sym} {side} {amt} @ {price}"
+
+    seconds_since_update = (now - latest_ts).total_seconds() if latest_ts else None
+
+    return BotStatusOut(
+        active=active,
+        last_trade=last_trade,
+        last_price_update=latest_ts.isoformat() if latest_ts else None,
+        seconds_since_update=seconds_since_update,
+        updated_symbols_last_min=int(updated_symbols or 0),
+        expected_enabled_symbols=enabled_symbols,
+    )
 
 @app.get("/api/balances", response_model=List[BalanceOut])
 async def balances(session: AsyncSession = Depends(get_session)):
