@@ -256,48 +256,71 @@ function targetDistanceBadgeFor(coin, hasHoldings) {
   const glowClass = (pricePct != null && Math.abs(pricePct - targetPct) <= 1) ? "glow" : "";
   return `<span class="inline-flex items-center px-2 py-1 rounded-full text-xs ${cls} ${glowClass}" style="--glow-color:${glowColor}">${label}</span>`;
 }
+// Escape HTML special characters to prevent XSS
+function escapeHTML(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function renderBalances(items) {
   // currency -> amount
   const map = {};
   for (const b of items || []) {
     if (!b?.currency) continue;
-    map[b.currency.toUpperCase()] = Number(b.available_balance ?? 0);
+    map[escapeHTML(b.currency.toUpperCase())] = Number(b.available_balance ?? 0);
+  }
+
+  function renderPriceCell(coin) {
+    return `<div class="flex justify-center">${priceBadgeFor(escapeHTML(coin)) || ""}</div>`;
+  }
+
+  function renderBuyRebuyCell(coin, amt, valUSDC) {
+    const hasHoldings = valUSDC >= 1;
+    return `<div class="flex justify-center">${hasHoldings ? rebuyBadgeFor(escapeHTML(coin)) : buyBadgeFor(escapeHTML(coin)) || ""}</div>`;
+  }
+
+  function renderTargetCell(coin, amt, valUSDC) {
+    const hasHoldings = valUSDC >= 1;
+    return `<div class="flex justify-center">${targetDistanceBadgeFor(escapeHTML(coin), hasHoldings) || ""}</div>`;
+  }
+
+  function renderSellCell(coin) {
+    return `<div class="flex justify-center">${renderBadgeFor(escapeHTML(coin)) || ""}</div>`;
+  }
+
+  function renderProfitCell(coin) {
+    return `<div class="flex justify-center">${profitBadgeFor(escapeHTML(coin)) || ""}</div>`;
   }
 
   const rows = enabledCoins
     .filter(c => c !== "USDC")
     .sort((a, b) => {
-      const valA = (map[a] ?? 0) * (badgeData[a]?.price_usdc ?? 0);
-      const valB = (map[b] ?? 0) * (badgeData[b]?.price_usdc ?? 0);
+      const valA = (map[escapeHTML(a)] ?? 0) * (badgeData[a]?.price_usdc ?? 0);
+      const valB = (map[escapeHTML(b)] ?? 0) * (badgeData[b]?.price_usdc ?? 0);
       return valB - valA; // highest first
     })
     .map(coin => {
-        const amt = map[coin] ?? 0;
-        const valUSDC = amt * (badgeData[coin]?.price_usdc ?? 0);
-        const priceSig = priceBadgeFor(coin);
-        const sellSig  = renderBadgeFor(coin);
-        const profitSig= profitBadgeFor(coin);
-        const valueSig  = valueBadgeFor(coin, amt);
+      const safeCoin = escapeHTML(coin);
+      const amt = map[safeCoin] ?? 0;
+      const valUSDC = amt * (badgeData[coin]?.price_usdc ?? 0);
 
-        const hasHoldings = valUSDC >= 1;
-        const buyRebuySig = hasHoldings ? rebuyBadgeFor(coin) : buyBadgeFor(coin);
-
-        const targetSig = targetDistanceBadgeFor(coin, hasHoldings);
-
-        return `<tr class="hover:bg-zinc-800/50">
-            <td class="py-2">${coin}</td>
-            <td class="py-2">
-            <div class="grid grid-cols-5 gap-1 text-center">
-                <div class="flex justify-center">${priceSig || ""}</div>
-                <div class="flex justify-center">${buyRebuySig || ""}</div>
-                <div class="flex justify-center">${targetSig || ""}</div>
-                <div class="flex justify-center">${sellSig || ""}</div>
-                <div class="flex justify-center">${profitSig || ""}</div>
-            </div>
-            </td>
-            <td class="py-2 text-right">${valueBadgeFor(coin, amt)}</td>
-        </tr>`;
+      return `<tr class="hover:bg-zinc-800/50">
+        <td class="py-2">${safeCoin}</td>
+        <td class="py-2">
+          <div class="grid grid-cols-5 gap-1 text-center">
+            ${renderPriceCell(coin)}
+            ${renderBuyRebuyCell(coin, amt, valUSDC)}
+            ${renderTargetCell(coin, amt, valUSDC)}
+            ${renderSellCell(coin)}
+            ${renderProfitCell(coin)}
+          </div>
+        </td>
+        <td class="py-2 text-right">${valueBadgeFor(coin, amt)}</td>
+      </tr>`;
     });
 
   balancesBody.innerHTML = rows.join("");
@@ -478,7 +501,10 @@ async function bootstrap() {
     // Only coins (exclude USDC)
     const opts = enabledCoins
       .filter(c => c !== "USDC")
-      .map(c => `<option value="${c}">${c}</option>`)
+      .map(c => {
+        const safe = escapeHTML(c);
+        return `<option value="${safe}">${safe}</option>`;
+      })
       .join("");
     cmdSymbol.innerHTML = opts || `<option value="" disabled>No enabled coins</option>`;
   }
